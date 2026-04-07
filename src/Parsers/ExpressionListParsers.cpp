@@ -306,6 +306,36 @@ ASTPtr makeBetweenOperator(bool negative, ASTs arguments)
     return makeASTOperator("and", f_left_expr, f_right_expr);
 }
 
+ASTPtr makeOverlapsOperator(const ASTs& arguments)
+{
+    // LEFT = arguments[0], RIGHT = arguments[1]
+
+    //Operands are half open intervals => Rewrite (s1, e1) OVERLAPS (s2, e2) to min(s1, e1) < max(s2, e2) AND min(s2, e2) < max(s1, e1)
+
+    ASTPtr literal_1 = make_intrusive<ASTLiteral>(static_cast<UInt64>(1));
+    ASTPtr literal_2 = make_intrusive<ASTLiteral>(static_cast<UInt64>(2));
+
+    auto get_elem = [](ASTPtr tuple, ASTPtr idx)
+    {      return makeASTFunction("tupleElement", tuple, idx);
+    };
+
+    auto s1 = get_elem(arguments[0], literal_1);
+    auto e1 = get_elem(arguments[0], literal_2);
+    auto s2 = get_elem(arguments[1], literal_1);
+    auto e2 = get_elem(arguments[1], literal_2);
+
+    // Matching Postgres behavior: automatically takes the earlier value as the start
+    auto f_left_start = makeASTFunction("least", s1, e1);
+    auto f_left_end = makeASTFunction("greatest", s1, e1);
+    auto f_right_start = makeASTFunction("least", s2, e2);
+    auto f_right_end = makeASTFunction("greatest", s2, e2);
+
+    auto f_left_expr = makeASTFunction("less", f_left_start, f_right_end);
+    auto f_right_expr = makeASTFunction("less", f_right_start, f_left_end);
+
+    return makeASTFunction("and", f_left_expr, f_right_expr);
+}
+
 ParserExpressionWithOptionalAlias::ParserExpressionWithOptionalAlias(bool allow_alias_without_as_keyword, bool is_table_function, bool allow_trailing_commas)
     : impl(std::make_unique<ParserWithOptionalAlias>(
         is_table_function ? ParserPtr(std::make_unique<ParserTableFunctionExpression>()) : ParserPtr(std::make_unique<ParserExpression>(allow_trailing_commas)),
@@ -491,6 +521,7 @@ enum class OperatorType : uint8_t
     StartBetween,
     StartNotBetween,
     FinishBetween,
+    Overlaps,
     StartIf,
     FinishIf,
     Cast,
@@ -689,6 +720,14 @@ public:
                     return false;
 
                 function = makeBetweenOperator(negative, arguments);
+            }
+            else if (cur_op.type == OperatorType::Overlaps)
+            {
+                ASTs arguments;
+                if (!popLastNOperands(arguments, 2))
+                    return false;
+
+                function = makeOverlapsOperator(arguments);
             }
             else
             {
@@ -2851,6 +2890,7 @@ const std::vector<std::pair<std::string_view, Operator>> ParserExpressionImpl::o
     {toStringView(Keyword::IS_NOT_NULL),   Operator("isNotNull",       6,  1, OperatorType::IsNull)},
     {toStringView(Keyword::BETWEEN),       Operator("",                7,  0, OperatorType::StartBetween)},
     {toStringView(Keyword::NOT_BETWEEN),   Operator("",                7,  0, OperatorType::StartNotBetween)},
+    {toStringView(Keyword::OVERLAPS),      Operator("",                9,  2, OperatorType::Overlaps)},
     {"==",            Operator("equals",          9,  2, OperatorType::Comparison)},
     {"!=",            Operator("notEquals",       9,  2, OperatorType::Comparison)},
     {"<=>",           Operator("isNotDistinctFrom", 9, 2, OperatorType::Comparison)},
@@ -3227,6 +3267,14 @@ Action ParserExpressionImpl::tryParseOperator(Layers & layers, IParser::Pos & po
                 return Action::NONE;
 
             function = makeBetweenOperator(negative, arguments);
+        }
+        else if (prev_op.type == OperatorType::Overlaps)
+        {
+            ASTs arguments;
+            if (!layers.back()->popLastNOperands(arguments,2))
+                return Action::NONE;
+
+            function = makeOverlapsOperator(arguments);
         }
         else
         {

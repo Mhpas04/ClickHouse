@@ -1317,7 +1317,7 @@ inline static bool makeHexOrBinStringLiteral(IParser::Pos & pos, ASTPtr & node, 
     return makeStringLiteral(pos, node, String(reinterpret_cast<char *>(res.data()), res.size()), expected);
 }
 
-bool ParserStringLiteral::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
+ bool ParserStringLiteral::parseImpl(Pos & pos, ASTPtr & node, Expected & expected)
 {
     if (pos->type != TokenType::StringLiteral && pos->type != TokenType::HereDoc)
         return false;
